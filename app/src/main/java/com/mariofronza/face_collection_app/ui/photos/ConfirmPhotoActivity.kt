@@ -1,116 +1,72 @@
 package com.mariofronza.face_collection_app.ui.photos
 
+import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Bundle
-import android.view.View
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.Observer
-import androidx.lifecycle.ViewModelProvider
-import com.mariofronza.face_collection_app.R
-import com.mariofronza.face_collection_app.api.ApiService
-import com.mariofronza.face_collection_app.repositories.PhotosRepository
-import com.mariofronza.face_collection_app.ui.MainActivity
-import kotlinx.android.synthetic.main.activity_confirm_photo.*
-import okhttp3.MediaType
+import androidx.lifecycle.lifecycleScope
+import com.mariofronza.face_collection_app.api.safeCall
+import com.mariofronza.face_collection_app.databinding.ActivityConfirmPhotoBinding
+import com.mariofronza.face_collection_app.ui.handle
+import com.mariofronza.face_collection_app.ui.toast
+import com.mariofronza.face_collection_app.ui.visible
+import com.mariofronza.face_collection_app.vision
+import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
-import okhttp3.RequestBody
-import java.io.*
-
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class ConfirmPhotoActivity : AppCompatActivity() {
 
-    private lateinit var token: String
-    private var photoId: Int = 0
-    private lateinit var photoType: String
-    private lateinit var byteArray: ByteArray
-    private lateinit var bitmap: Bitmap
-
-    private lateinit var photosViewModel: PhotosViewModel
-    private lateinit var photosViewModelFactory: PhotosViewModelFactory
+    private lateinit var binding: ActivityConfirmPhotoBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_confirm_photo)
+        binding = ActivityConfirmPhotoBinding.inflate(layoutInflater)
+        setContentView(binding.root)
 
-        token = intent.getStringExtra("token").toString()
-        photoId = intent.getIntExtra("photoId", 0)
-        photoType = intent.getStringExtra("photoType").toString()
-        byteArray = intent.getByteArrayExtra("bitmap")!!
+        val jpeg = intent.getByteArrayExtra(EXTRA_JPEG) ?: return finish()
+        val photoId = intent.getIntExtra(EXTRA_ID, 0)
+        val photoType = intent.getStringExtra(EXTRA_TYPE).orEmpty()
 
-        bitmap = BitmapFactory.decodeByteArray(byteArray, 0, byteArray.size)
-        tvStudentPhoto.setImageBitmap(bitmap)
-
-        val api = ApiService()
-        val photosRepository = PhotosRepository(api)
-
-        photosViewModelFactory = PhotosViewModelFactory(photosRepository)
-        photosViewModel =
-            ViewModelProvider(this, photosViewModelFactory).get(PhotosViewModel::class.java)
-
-        photosViewModel.photos.observe(this, Observer {
-            btnConfirmPhoto.revertAnimation()
-            btnNewPhoto.visibility = View.VISIBLE
-            goToMainActivity()
-        })
-
-        photosViewModel.error.observe(this, Observer {
-            btnConfirmPhoto.revertAnimation()
-            btnNewPhoto.visibility = View.VISIBLE
-            Toast.makeText(this, "Erro ao realizar operação", Toast.LENGTH_SHORT).show()
-        })
-    }
-
-    private fun goToMainActivity() {
-        Intent(this, MainActivity::class.java).also {
-            startActivity(it)
+        binding.ivPhoto.setImageBitmap(BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size))
+        binding.btnRetake.setOnClickListener {
+            startActivity(Intent(this, CapturePhotoActivity::class.java).putExtras(intent))
+            finish()
         }
-        finish()
+        binding.btnConfirm.setOnClickListener { upload(jpeg, photoId, photoType) }
     }
 
-    fun confirmPhoto(view: View) {
-        btnConfirmPhoto.startAnimation()
-        btnNewPhoto.visibility = View.GONE
-        if (photoId == 0) {
-            createPhoto()
-        } else {
-            updatePhoto()
+    private fun upload(jpeg: ByteArray, photoId: Int, photoType: String) {
+        setLoading(true)
+        val file = MultipartBody.Part.createFormData("file", "face.jpg", jpeg.toRequestBody("image/jpeg".toMediaType()))
+        lifecycleScope.launch {
+            safeCall { if (photoId == 0) vision.api.createPhoto(photoType, file) else vision.api.replacePhoto(photoId, file) }
+                .onSuccess {
+                    toast("Foto salva")
+                    finish()
+                }
+                .onFailure { handle(it) }
+            setLoading(false)
         }
     }
 
-    private fun createPhoto() {
-        val photo = preparePhoto()
-        photosViewModel.createPhoto(token, photoType, photo)
+    private fun setLoading(loading: Boolean) {
+        binding.btnConfirm.isEnabled = !loading
+        binding.btnRetake.isEnabled = !loading
+        binding.progress.visible(loading)
     }
 
-    private fun updatePhoto() {
-        val photo = preparePhoto()
-        photosViewModel.updatePhoto(token, photoId, photoType, photo)
-    }
+    companion object {
+        private const val EXTRA_JPEG = "jpeg"
+        private const val EXTRA_ID = "photoId"
+        private const val EXTRA_TYPE = "photoType"
 
-
-    private fun convertFileToBitmap(file: File) {
-        file.createNewFile()
-        val os = BufferedOutputStream(FileOutputStream(file))
-        bitmap.compress(Bitmap.CompressFormat.PNG, 0, os)
-        os.close()
-    }
-
-
-    private fun preparePhoto(): MultipartBody.Part {
-        val file = File(cacheDir, "student-photo");
-        convertFileToBitmap(file);
-
-        val requestFile = RequestBody.create(MediaType.parse("multipart/form-data"), file)
-        return MultipartBody.Part.createFormData(
-            "file",
-            file.name + ".jpg", requestFile
-        )
-    }
-
-    fun newPhoto(view: View) {
-        finish()
+        fun intent(context: Context, jpeg: ByteArray, photoId: Int, photoType: String): Intent =
+            Intent(context, ConfirmPhotoActivity::class.java)
+                .putExtra(EXTRA_JPEG, jpeg)
+                .putExtra(EXTRA_ID, photoId)
+                .putExtra(EXTRA_TYPE, photoType)
     }
 }
