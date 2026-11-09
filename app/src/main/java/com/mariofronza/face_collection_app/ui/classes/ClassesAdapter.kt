@@ -2,63 +2,38 @@ package com.mariofronza.face_collection_app.ui.classes
 
 import android.annotation.SuppressLint
 import android.view.LayoutInflater
-import android.view.View
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
-import com.mariofronza.face_collection_app.R
-import com.mariofronza.face_collection_app.listeners.RecyclerViewClickClassListener
-import com.mariofronza.face_collection_app.models.Class
-import kotlinx.android.synthetic.main.class_item.view.*
-import java.text.SimpleDateFormat
-import java.time.format.DateTimeFormatter
-import java.util.*
+import com.mariofronza.face_collection_app.api.Lecture
+import com.mariofronza.face_collection_app.databinding.ClassItemBinding
+import com.mariofronza.face_collection_app.ui.formatDay
+import com.mariofronza.face_collection_app.ui.formatTime
 
-class ClassesAdapter(
-    private val classes: List<Class>,
-    private val listener: RecyclerViewClickClassListener
-) : RecyclerView.Adapter<ClassesAdapter.ClassViewHolder>() {
+class ClassesAdapter(private val onClick: (Lecture) -> Unit) : RecyclerView.Adapter<ClassesAdapter.Holder>() {
 
-    inner class ClassViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView)
+    class Holder(val binding: ClassItemBinding) : RecyclerView.ViewHolder(binding.root)
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ClassViewHolder {
-        val view = LayoutInflater.from(parent.context).inflate(R.layout.class_item, parent, false)
-        return ClassViewHolder(view)
+    private var lectures: List<Lecture> = emptyList()
+
+    @SuppressLint("NotifyDataSetChanged")
+    fun submit(lectures: List<Lecture>) {
+        this.lectures = lectures
+        notifyDataSetChanged()
     }
 
-    override fun onBindViewHolder(holder: ClassViewHolder, position: Int) {
-        val classItem = classes[position]
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
+        Holder(ClassItemBinding.inflate(LayoutInflater.from(parent.context), parent, false))
 
-        holder.itemView.apply {
-            tvClassItemStartHour.text = getFormattedHour(classItem.startHour)
-            tvClassItemEndHour.text = getFormattedHour(classItem.endHour)
-            tvClassItemDate.text = ""
-            tvClassItemSubjectName.text = classItem.subject.name
-
-            cvClass.setOnClickListener {
-                listener.onRecyclerViewItemClick(classItem)
-            }
+    override fun onBindViewHolder(holder: Holder, position: Int) {
+        val lecture = lectures[position]
+        with(holder.binding) {
+            tvClassItemSubjectName.text = lecture.subject.name
+            tvClassItemDate.text = formatDay(lecture.date)
+            tvClassItemStartHour.text = formatTime(lecture.startHour)
+            tvClassItemEndHour.text = formatTime(lecture.endHour)
+            cvClass.setOnClickListener { onClick(lecture) }
         }
     }
 
-    override fun getItemCount(): Int {
-        return classes.size
-    }
-
-    @SuppressLint("SimpleDateFormat")
-    private fun getFormattedHour(date: String): String {
-        val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss")
-        parser.timeZone = TimeZone.getTimeZone("GMT")
-        val formatter = SimpleDateFormat("HH:mm")
-        return formatter.format(parser.parse(date))
-    }
-
-
-    @SuppressLint("SimpleDateFormat")
-    private fun getFormattedDate(date: String): String {
-        val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss")
-        parser.timeZone = TimeZone.getTimeZone("UTC")
-        val formatter = SimpleDateFormat("dd/MM/yyyy")
-        return formatter.format(parser.parse(date))
-    }
-
+    override fun getItemCount() = lectures.size
 }
