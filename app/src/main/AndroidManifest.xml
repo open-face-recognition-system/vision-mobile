@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    package="com.mariofronza.face_collection_app">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -10,38 +8,36 @@
         android:name="android.hardware.camera"
         android:required="false" />
     <uses-feature
-        android:name="android.hardware.camera.autofocus"
-        android:required="false" />
-    <uses-feature
         android:name="android.hardware.camera.front"
-        android:required="false" />
-    <uses-feature
-        android:name="android.hardware.camera.front.autofocus"
         android:required="false" />
 
     <application
-        android:allowBackup="true"
+        android:name=".VisionApp"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Facecollectionapp"
-        android:usesCleartextTraffic="true"
-        tools:targetApi="m">
-        <activity android:name=".ui.user.SignUpActivity"></activity>
-        <activity android:name=".ui.photos.ConfirmPhotoActivity" />
-        <activity android:name=".ui.photos.HandlePhotoActivity" />
-        <activity android:name=".ui.classes.RealtimeRecognizeActivity" />
-        <activity android:name=".ui.classes.RecognizeActivity" />
-        <activity android:name=".ui.user.SignInActivity" />
-        <activity android:name=".ui.AppIntroActivity" />
-        <activity android:name=".ui.MainActivity">
+        android:usesCleartextTraffic="${usesCleartextTraffic}">
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".ui.IntroActivity" />
+        <activity android:name=".ui.user.SignInActivity" />
+        <activity android:name=".ui.user.SignUpActivity" />
+        <activity
+            android:name=".ui.photos.CapturePhotoActivity"
+            android:screenOrientation="portrait" />
+        <activity android:name=".ui.photos.ConfirmPhotoActivity" />
+        <activity
+            android:name=".ui.classes.RecognizeActivity"
+            android:screenOrientation="portrait" />
     </application>
 
 </manifest>

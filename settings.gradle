@@ -1,6 +1,18 @@
-include ':app'
-rootProject.name = "face-collection-app"
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
 
-def opencvsdk='../'
-include ':opencv'
-project(':opencv').projectDir = new File(opencvsdk + '/sdk')
+dependencyResolutionManagement {
+    repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "vision-mobile"
+include ':app'

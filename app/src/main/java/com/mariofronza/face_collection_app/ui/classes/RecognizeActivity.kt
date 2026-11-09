@@ -1,235 +1,122 @@
 package com.mariofronza.face_collection_app.ui.classes
 
-import android.app.AlertDialog
 import android.content.Context
-import android.content.DialogInterface
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.content.Intent
 import android.os.Bundle
-import android.util.Log
-import android.view.View
-import android.view.WindowManager
-import android.widget.Toast
-
-import androidx.lifecycle.Observer
-import androidx.lifecycle.ViewModelProvider
-import com.mariofronza.face_collection_app.R
-import com.mariofronza.face_collection_app.api.ApiService
-import com.mariofronza.face_collection_app.repositories.PhotosRepository
-import com.mariofronza.face_collection_app.ui.photos.PhotosViewModel
-import com.mariofronza.face_collection_app.ui.photos.PhotosViewModelFactory
-import com.mariofronza.face_collection_app.utils.SessionManager
-import kotlinx.android.synthetic.main.activity_realtime_recognize_student.*
-import kotlinx.android.synthetic.main.activity_recognize_student.*
-import okhttp3.MediaType
+import androidx.appcompat.app.AlertDialog
+import com.mariofronza.face_collection_app.api.ApiError
+import com.mariofronza.face_collection_app.api.Lecture
+import com.mariofronza.face_collection_app.api.PresenceRequest
+import com.mariofronza.face_collection_app.api.Recognition
+import com.mariofronza.face_collection_app.api.safeCall
+import com.mariofronza.face_collection_app.databinding.ActivityRealtimeRecognizeStudentBinding
+import com.mariofronza.face_collection_app.face.FaceCameraActivity
+import com.mariofronza.face_collection_app.ui.handle
+import com.mariofronza.face_collection_app.ui.toast
+import com.mariofronza.face_collection_app.ui.visible
+import com.mariofronza.face_collection_app.vision
+import kotlinx.coroutines.launch
 import okhttp3.MultipartBody
-import okhttp3.RequestBody
-import org.opencv.android.*
-import org.opencv.android.CameraBridgeViewBase.CvCameraViewFrame
-import org.opencv.android.CameraBridgeViewBase.CvCameraViewListener2
-import org.opencv.core.*
-import org.opencv.imgproc.Imgproc
-import org.opencv.objdetect.CascadeClassifier
-import java.io.*
-import kotlin.concurrent.thread
+import org.opencv.android.CameraBridgeViewBase
 
-class RecognizeActivity : CameraActivity(), CvCameraViewListener2 {
-    private lateinit var currentPhoto: MultipartBody.Part
-    lateinit var mRgba: Mat
-    lateinit var mGray: Mat
+/**
+ * Recognizes one face at a time: a new attempt starts only after the previous face left the frame,
+ * so the same student is not sent over and over.
+ */
+class RecognizeActivity : FaceCameraActivity() {
 
-    private var mJavaDetector: CascadeClassifier? = null
-    private var classId = 0
-    private var studentId = 0
+    private lateinit var binding: ActivityRealtimeRecognizeStudentBinding
+    override val cameraView: CameraBridgeViewBase get() = binding.cameraView
 
-    private var sessionManager: SessionManager? = null
-    private lateinit var photosViewModel: PhotosViewModel
-    private lateinit var photosViewModelFactory: PhotosViewModelFactory
+    private val classId by lazy { intent.getIntExtra(EXTRA_CLASS_ID, 0) }
 
-    private var recognizeLoading = false
-
-    lateinit var currentReact: Rect
-    private var cameraIndex: Int = 1
-    private var totalFaces: Int = 0
-    private var readyToRecognize: Boolean = true
-
+    @Volatile private var busy = false
+    @Volatile private var faceLeft = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        setContentView(R.layout.activity_recognize_student)
-        val intent = intent
-        classId = intent.extras!!.getInt("classId")
-        sessionManager = SessionManager(this)
-
-        val api = ApiService()
-        val photosRepository = PhotosRepository(api)
-
-        photosViewModelFactory = PhotosViewModelFactory(photosRepository)
-        photosViewModel =
-            ViewModelProvider(this, photosViewModelFactory).get(PhotosViewModel::class.java)
-
-        sessionManager = SessionManager(this)
-
+        binding = ActivityRealtimeRecognizeStudentBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+        title = intent.getStringExtra(EXTRA_SUBJECT)
+        binding.btnSwitchCamera.setOnClickListener { switchCamera() }
+        startCamera()
     }
 
+    override fun onFacesDetected(count: Int) {
+        if (count == 0) faceLeft = true
+        if (count != 1 || busy || !faceLeft) return
+        val face = facePart() ?: return
+        busy = true
+        faceLeft = false
+        runOnUiThread { recognize(face) }
+    }
 
-    private val mLoaderCallback: BaseLoaderCallback = object : BaseLoaderCallback(this) {
-        override fun onManagerConnected(status: Int) {
-            if (status == SUCCESS) {
-                System.loadLibrary("detection_based_tracker")
-                try {
-                    val `is` = resources.openRawResource(R.raw.lbpcascade_frontalface)
-                    val cascadeDir = getDir("cascade", Context.MODE_PRIVATE)
-                    val mCascadeFile = File(cascadeDir, "lbpcascade_frontalface.xml")
-                    val os = FileOutputStream(mCascadeFile)
-                    val buffer = ByteArray(4096)
-                    var bytesRead: Int
-                    while (`is`.read(buffer).also { bytesRead = it } != -1) {
-                        os.write(buffer, 0, bytesRead)
-                    }
-                    `is`.close()
-                    os.close()
-                    mJavaDetector = CascadeClassifier(mCascadeFile.absolutePath)
-                    if (mJavaDetector!!.empty()) {
-                        mJavaDetector = null
-                    }
-                    cascadeDir.delete()
-                } catch (e: IOException) {
-                    e.printStackTrace()
+    private fun recognize(face: MultipartBody.Part) {
+        showStatus("Reconhecendo...", loading = true)
+        scope.launch {
+            safeCall { vision.api.recognize(classId, face) }
+                .onSuccess { recognition ->
+                    if (recognition.confidence > CONFIRMATION_DISTANCE) confirm(recognition, face)
+                    else done("${recognition.student.user.name}: presente")
                 }
-                cvRecognizeOne!!.enableView()
-            } else {
-                super.onManagerConnected(status)
+                .onFailure {
+                    showStatus(it.message ?: "Aluno não reconhecido")
+                    if ((it as? ApiError)?.status == 401) handle(it)
+                    busy = false
+                }
+        }
+    }
+
+    private fun confirm(recognition: Recognition, face: MultipartBody.Part) {
+        val name = recognition.student.user.name
+        AlertDialog.Builder(this)
+            .setTitle("Confirmar aluno")
+            .setMessage("Este aluno é $name?")
+            .setCancelable(false)
+            .setPositiveButton("Sim") { _, _ -> teach(recognition, face) }
+            .setNegativeButton("Não") { _, _ -> undoPresence(recognition) }
+            .show()
+    }
+
+    /** A confirmed but distant match becomes a new training sample, so the student is recognized faster next time. */
+    private fun teach(recognition: Recognition, face: MultipartBody.Part) {
+        scope.launch {
+            safeCall { vision.api.teach(classId, recognition.student.id, face) }
+                .onFailure { toast("Presença registrada, mas a foto não foi aprendida: ${it.message}") }
+            done("${recognition.student.user.name}: presente")
+        }
+    }
+
+    private fun undoPresence(recognition: Recognition) {
+        scope.launch {
+            safeCall {
+                vision.api.setPresence(recognition.attendanceId, PresenceRequest(classId, recognition.student.id, false))
             }
+                .onSuccess { showStatus("Presença desfeita. Tente novamente.") }
+                .onFailure { showStatus("Não foi possível desfazer a presença de ${recognition.student.user.name}: ${it.message}") }
+            busy = false
         }
     }
 
-    override fun onCameraViewStarted(width: Int, height: Int) {
-        mGray = Mat()
-        mRgba = Mat()
+    private fun done(message: String) {
+        showStatus(message)
+        busy = false
     }
 
-    override fun onCameraViewStopped() {
-        mGray = Mat()
-        mRgba = Mat()
+    private fun showStatus(message: String, loading: Boolean = false) {
+        binding.tvStatus.text = message
+        binding.progress.visible(loading)
     }
 
-    override fun onCameraFrame(inputFrame: CvCameraViewFrame): Mat {
-        val faces = MatOfRect()
-        mRgba = inputFrame.rgba()
-        mGray = inputFrame.gray()
+    companion object {
+        /** Matches farther than this ask the teacher to confirm; the server rejects anything past its own threshold. */
+        private const val CONFIRMATION_DISTANCE = 45.0
+        private const val EXTRA_CLASS_ID = "classId"
+        private const val EXTRA_SUBJECT = "subject"
 
-        val rotImage = Imgproc.getRotationMatrix2D(
-            Point(
-                (mRgba.cols().div(2)).toDouble(),
-                (mRgba.rows().div(2)).toDouble()
-            ), 90.0, 1.0
-        )
-        Imgproc.warpAffine(mRgba, mRgba, rotImage, mRgba.size())
-        Imgproc.warpAffine(mGray, mGray, rotImage, mRgba.size())
-
-        val flipCode = if (cameraIndex == 1) {
-            1
-        } else {
-            0
-        }
-
-        Core.flip(mRgba, mRgba, flipCode)
-        Core.flip(mGray, mGray, flipCode)
-
-
-        mJavaDetector!!.detectMultiScale(
-            mGray, faces, 1.05, 5, 2,
-            Size(400.0, 400.0)
-        )
-        val facesArray = faces.toArray()
-        totalFaces = facesArray.size
-
-        if (facesArray.isEmpty()) {
-            readyToRecognize = true
-        }
-
-        for (rect in facesArray) {
-            Imgproc.rectangle(mRgba, rect.br(), rect.tl(), Scalar(0.0, 255.0, 0.0, 255.0), 3)
-            currentReact = rect
-        }
-
-        return mRgba
-    }
-
-    private fun preparePhoto(mat: Mat): MultipartBody.Part {
-        val bitmap = convertMatToBitMap(mat)
-
-        val stream = ByteArrayOutputStream()
-        bitmap!!.compress(Bitmap.CompressFormat.PNG, 100, stream)
-        val byteArray = stream.toByteArray()
-        val finalBitMap = BitmapFactory.decodeByteArray(byteArray, 0, byteArray.size)
-
-        val file = File(cacheDir, "student-photo");
-        convertFileToBitmap(file, finalBitMap);
-
-        val requestFile = RequestBody.create(MediaType.parse("multipart/form-data"), file)
-        currentPhoto = MultipartBody.Part.createFormData(
-            "file",
-            file.name + ".jpg", requestFile
-        )
-        return currentPhoto
-    }
-
-    private fun updateUserPhoto() {
-        thread {
-            photosViewModel.update(
-                sessionManager?.fetchAuthToken()!!,
-                studentId,
-                classId,
-                currentPhoto
-            )
-        }
-    }
-
-    private fun convertFileToBitmap(file: File, bitmap: Bitmap) {
-        file.createNewFile()
-        val os = BufferedOutputStream(FileOutputStream(file))
-        bitmap.compress(Bitmap.CompressFormat.PNG, 0, os)
-        os.close()
-    }
-
-    private fun convertMatToBitMap(input: Mat): Bitmap? {
-        var bmp: Bitmap? = null
-        try {
-            val cropped = Mat(input, currentReact)
-            bmp = Bitmap.createBitmap(cropped.cols(), cropped.rows(), Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(cropped, bmp)
-        } catch (e: CvException) {
-            Log.d("Exception", e.message!!)
-        }
-        return bmp
-    }
-
-    override fun getCameraViewList(): List<CameraBridgeViewBase?> {
-        return listOf(cvRecognizeOne)
-    }
-
-    public override fun onPause() {
-        super.onPause()
-        if (cvRecognizeOne != null) {
-            cvRecognizeOne!!.disableView()
-        }
-    }
-
-    public override fun onResume() {
-        super.onResume()
-        if (!OpenCVLoader.initDebug()) {
-            OpenCVLoader.initAsync(OpenCVLoader.OPENCV_VERSION_3_0_0, this, mLoaderCallback)
-        } else {
-            mLoaderCallback.onManagerConnected(LoaderCallbackInterface.SUCCESS)
-        }
-    }
-
-    public override fun onDestroy() {
-        super.onDestroy()
-        cvRecognizeOne!!.disableView()
+        fun intent(context: Context, lecture: Lecture): Intent =
+            Intent(context, RecognizeActivity::class.java)
+                .putExtra(EXTRA_CLASS_ID, lecture.id)
+                .putExtra(EXTRA_SUBJECT, lecture.subject.name)
     }
 }

@@ -1,102 +1,75 @@
 package com.mariofronza.face_collection_app.ui.user
 
 import android.os.Bundle
-import android.text.Editable
-import androidx.fragment.app.Fragment
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Toast
-import androidx.lifecycle.Observer
-import androidx.lifecycle.ViewModelProvider
-import br.com.simplepass.loadingbutton.customViews.CircularProgressButton
-import com.mariofronza.face_collection_app.R
-import com.mariofronza.face_collection_app.api.ApiService
-import com.mariofronza.face_collection_app.models.ProfileRequest
-import com.mariofronza.face_collection_app.repositories.UsersRepository
-import com.mariofronza.face_collection_app.utils.SessionManager
-import kotlinx.android.synthetic.main.fragment_profile.*
-import kotlinx.android.synthetic.main.fragment_profile.view.*
-
+import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import com.mariofronza.face_collection_app.api.ProfileRequest
+import com.mariofronza.face_collection_app.api.safeCall
+import com.mariofronza.face_collection_app.databinding.FragmentProfileBinding
+import com.mariofronza.face_collection_app.ui.handle
+import com.mariofronza.face_collection_app.ui.toast
+import com.mariofronza.face_collection_app.ui.visible
+import com.mariofronza.face_collection_app.vision
+import kotlinx.coroutines.launch
 
 class ProfileFragment : Fragment() {
 
-    private lateinit var sessionManager: SessionManager
-    private lateinit var factory: UserViewModelFactory
-    private lateinit var viewModel: UserViewModel
-    private lateinit var saveProfileButton: CircularProgressButton
+    private var _binding: FragmentProfileBinding? = null
+    private val binding get() = _binding!!
 
-    override fun onCreateView(
-        inflater: LayoutInflater, container: ViewGroup?,
-        savedInstanceState: Bundle?
-    ): View? {
-        val view = inflater.inflate(R.layout.fragment_profile, container, false)
-
-        val api = ApiService()
-        val usersRepository = UsersRepository(api)
-        sessionManager = SessionManager(requireActivity())
-        factory = UserViewModelFactory(usersRepository)
-        viewModel = ViewModelProvider(this, factory).get(UserViewModel::class.java)
-
-        saveProfileButton = view.findViewById(R.id.saveProfileButton)
-
-        view.etProfileName.text =
-            sessionManager.fetchUserData()?.name?.toEditable() ?: "".toEditable()
-        view.etProfileEmail.text =
-            sessionManager.fetchUserData()?.email?.toEditable() ?: "".toEditable()
-
-
-        viewModel.profileSuccess.observe(requireActivity(), Observer {
-            if (it == true) {
-                Toast.makeText(activity, "Sucesso ao alterar senha", Toast.LENGTH_SHORT).show()
-                saveProfileButton.revertAnimation()
-            }
-        })
-
-        viewModel.userResponse.observe(requireActivity(), Observer {
-            sessionManager.saveUserData(it)
-        })
-
-        viewModel.error.observe(requireActivity(), Observer { message ->
-            Toast.makeText(activity, message, Toast.LENGTH_SHORT).show()
-            saveProfileButton.revertAnimation()
-        })
-
-        saveProfileButton.setOnClickListener {
-            prepareUpdate()
-        }
-
-        return view
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        _binding = FragmentProfileBinding.inflate(inflater, container, false)
+        return binding.root
     }
 
-    private fun String.toEditable(): Editable = Editable.Factory.getInstance().newEditable(this)
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        val user = requireContext().vision.session.current?.user
+        binding.etName.setText(user?.name)
+        binding.etEmail.setText(user?.email)
+        binding.btnSave.setOnClickListener { validate()?.let(::save) }
+    }
 
-    private fun prepareUpdate() {
-        val name = etProfileName.text.toString()
-        val email = etProfileEmail.text.toString()
-        val oldPassword = profileEditTextCurrentPass.text.toString()
-        val password = profileEditTextNewPass.text.toString()
-        val passwordConfirmation = profileEditTextConfirmPass.text.toString()
-
-        if (name.isEmpty() || email.isEmpty() || oldPassword.isEmpty() || password.isBlank() || passwordConfirmation.isEmpty()) {
-            Toast.makeText(activity, "Preencha todos os campos", Toast.LENGTH_SHORT).show()
-        } else {
-            updateProfile(name, email, password, oldPassword, passwordConfirmation)
+    private fun validate(): ProfileRequest? {
+        val request = ProfileRequest(
+            name = binding.etName.text.toString().trim(),
+            email = binding.etEmail.text.toString().trim(),
+            oldPassword = binding.etCurrentPassword.text.toString(),
+            password = binding.etNewPassword.text.toString(),
+            passwordConfirmation = binding.etConfirmPassword.text.toString(),
+        )
+        return when {
+            listOf(request.name, request.email, request.oldPassword, request.password).any { it.isEmpty() } ->
+                null.also { requireContext().toast("Preencha todos os campos") }
+            request.password != request.passwordConfirmation ->
+                null.also { requireContext().toast("A confirmação não confere com a nova senha") }
+            else -> request
         }
     }
 
-    private fun updateProfile(
-        name: String,
-        email: String,
-        password: String,
-        oldPassword: String,
-        passwordConfirmation: String
-    ) {
-        saveProfileButton.startAnimation()
-        val profile = ProfileRequest(name, email, oldPassword, password, passwordConfirmation)
-        val token = sessionManager.fetchAuthToken() ?: ""
-        viewModel.updateProfile(token, profile)
+    private fun save(request: ProfileRequest) {
+        setLoading(true)
+        viewLifecycleOwner.lifecycleScope.launch {
+            val vision = requireContext().vision
+            safeCall { vision.api.updateProfile(request) }
+                .onSuccess { user ->
+                    vision.session.current = vision.session.current?.copy(user = user)
+                    requireContext().toast("Perfil atualizado")
+                }
+                .onFailure { requireActivity().handle(it) }
+            setLoading(false)
+        }
     }
 
+    private fun setLoading(loading: Boolean) {
+        binding.btnSave.isEnabled = !loading
+        binding.progress.visible(loading)
+    }
 
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null
+    }
 }

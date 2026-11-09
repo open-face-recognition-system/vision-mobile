@@ -245,7 +245,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="Ao clicar em 'Done' você consente participar do estudo e permite que sejam realizadas e coletadas fotografias do seu rosto para fins deste estudo. Uma via deste Termo de Consentimento Livre e Esclarecido será enviada ao seu e-mail."
+            android:text="Ao marcar &quot;Li e aceito o termo&quot; você consente participar do estudo e permite que sejam realizadas e coletadas fotografias do seu rosto para fins deste estudo. Uma via deste Termo de Consentimento Livre e Esclarecido será enviada ao seu e-mail."
             android:textAlignment="viewStart"
             android:textColor="@android:color/white"
             app:layout_constraintBottom_toBottomOf="parent"

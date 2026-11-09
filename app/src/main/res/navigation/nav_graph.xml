@@ -10,11 +10,6 @@
         android:name="com.mariofronza.face_collection_app.ui.photos.PhotosFragment"
         android:label="fragment_photos"
         tools:layout="@layout/fragment_photos" />
-    <activity
-        android:id="@+id/mainActivity"
-        android:name="com.mariofronza.face_collection_app.ui.MainActivity"
-        android:label="activity_main"
-        tools:layout="@layout/activity_main" />
     <fragment
         android:id="@+id/profileFragment"
         android:name="com.mariofronza.face_collection_app.ui.user.ProfileFragment"

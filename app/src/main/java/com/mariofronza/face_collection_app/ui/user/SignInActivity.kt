@@ -1,94 +1,61 @@
 package com.mariofronza.face_collection_app.ui.user
 
+import android.content.Context
 import android.content.Intent
-import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
-import android.widget.Toast
-import androidx.lifecycle.Observer
-import androidx.lifecycle.ViewModelProvider
-import com.mariofronza.face_collection_app.R
-import com.mariofronza.face_collection_app.api.ApiService
-import com.mariofronza.face_collection_app.models.SessionRequest
-import com.mariofronza.face_collection_app.models.SessionResponse
-import com.mariofronza.face_collection_app.repositories.UsersRepository
+import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import com.mariofronza.face_collection_app.api.SessionRequest
+import com.mariofronza.face_collection_app.api.safeCall
+import com.mariofronza.face_collection_app.databinding.ActivitySignInBinding
 import com.mariofronza.face_collection_app.ui.MainActivity
-import com.mariofronza.face_collection_app.utils.SessionManager
-import kotlinx.android.synthetic.main.activity_sign_in.*
+import com.mariofronza.face_collection_app.ui.toast
+import com.mariofronza.face_collection_app.ui.visible
+import com.mariofronza.face_collection_app.vision
+import kotlinx.coroutines.launch
 
 class SignInActivity : AppCompatActivity() {
 
-    private lateinit var sessionManager: SessionManager
-    private lateinit var factory: UserViewModelFactory
-    private lateinit var viewModel: UserViewModel
-
+    private lateinit var binding: ActivitySignInBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_sign_in)
+        binding = ActivitySignInBinding.inflate(layoutInflater)
+        setContentView(binding.root)
 
-        val api = ApiService()
-        val usersRepository = UsersRepository(api)
-        sessionManager = SessionManager(this)
-        factory = UserViewModelFactory(usersRepository)
-        viewModel = ViewModelProvider(this, factory).get(UserViewModel::class.java)
-
-        viewModel.session.observe(this, Observer { sessionResponse ->
-            signInSuccess(sessionResponse)
-        })
-
-        viewModel.error.observe(this, Observer { message ->
-            signInFail(message)
-        })
-
-        tvCreateAccount.setOnClickListener {
-            goToSignUpActivity()
-        }
-
-        btnSignIn.setOnClickListener {
-            validateFields()
-        }
-
-    }
-
-
-    private fun validateFields() {
-        val email = etSignInEmail.text.toString()
-        val password = etSignInPassword.text.toString()
-
-        if (email.isEmpty() || password.isBlank()) {
-            Toast.makeText(this, "Preencha todos os campos", Toast.LENGTH_SHORT).show()
-        } else {
-            signIn(email, password)
+        binding.tvCreateAccount.setOnClickListener { startActivity(Intent(this, SignUpActivity::class.java)) }
+        binding.btnSignIn.setOnClickListener {
+            val email = binding.etEmail.text.toString().trim()
+            val password = binding.etPassword.text.toString()
+            if (email.isEmpty() || password.isEmpty()) toast("Preencha todos os campos") else signIn(email, password)
         }
     }
 
     private fun signIn(email: String, password: String) {
-        val session = SessionRequest(email, password)
-        btnSignIn.startAnimation()
-        viewModel.singIn(session)
-    }
-
-    private fun signInSuccess(sessionResponse: SessionResponse) {
-        sessionManager.saveAuthToken(sessionResponse.token)
-        sessionManager.saveRefreshToken(sessionResponse.refreshToken)
-        sessionManager.saveUserData(sessionResponse.user)
-        btnSignIn.revertAnimation()
-        Intent(this, MainActivity::class.java).also {
-            startActivity(it)
-        }
-        finish()
-    }
-
-    private fun goToSignUpActivity() {
-        Intent(this, SignUpActivity::class.java).also {
-            startActivity(it)
+        setLoading(true)
+        lifecycleScope.launch {
+            signIn(this@SignInActivity, email, password)
+                .onSuccess { openApp() }
+                .onFailure { toast(it.message) }
+            setLoading(false)
         }
     }
 
-
-    private fun signInFail(message: String) {
-        btnSignIn.revertAnimation()
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    private fun openApp() {
+        startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
     }
 
+    private fun setLoading(loading: Boolean) {
+        binding.btnSignIn.isEnabled = !loading
+        binding.progress.visible(loading)
+    }
+
+    companion object {
+        /** Signs in a student or teacher and stores the session; admins use the web panel. */
+        suspend fun signIn(context: Context, email: String, password: String): Result<Unit> =
+            safeCall { context.vision.api.signIn(SessionRequest(email, password)) }.mapCatching { session ->
+                if (session.user.role == "admin") error("Administradores usam o painel web do Vision")
+                context.vision.session.current = session
+            }
+    }
 }

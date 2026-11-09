@@ -1,101 +1,65 @@
 package com.mariofronza.face_collection_app.ui.user
 
 import android.content.Intent
-import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
-import android.widget.Toast
-import androidx.lifecycle.Observer
-import androidx.lifecycle.ViewModelProvider
-import com.mariofronza.face_collection_app.R
-import com.mariofronza.face_collection_app.api.ApiService
-import com.mariofronza.face_collection_app.models.SessionRequest
-import com.mariofronza.face_collection_app.models.SessionResponse
-import com.mariofronza.face_collection_app.models.StudentRequest
-import com.mariofronza.face_collection_app.models.UserRequest
-import com.mariofronza.face_collection_app.repositories.UsersRepository
+import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import com.mariofronza.face_collection_app.api.SignUpRequest
+import com.mariofronza.face_collection_app.api.safeCall
+import com.mariofronza.face_collection_app.databinding.ActivitySignUpBinding
 import com.mariofronza.face_collection_app.ui.MainActivity
-import com.mariofronza.face_collection_app.utils.SessionManager
-import kotlinx.android.synthetic.main.activity_sign_up.*
+import com.mariofronza.face_collection_app.ui.toast
+import com.mariofronza.face_collection_app.ui.visible
+import com.mariofronza.face_collection_app.vision
+import kotlinx.coroutines.launch
 
 class SignUpActivity : AppCompatActivity() {
 
-    private lateinit var sessionManager: SessionManager
-    private lateinit var factory: UserViewModelFactory
-    private lateinit var viewModel: UserViewModel
+    private lateinit var binding: ActivitySignUpBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_sign_up)
+        binding = ActivitySignUpBinding.inflate(layoutInflater)
+        setContentView(binding.root)
 
-        val api = ApiService()
-        val usersRepository = UsersRepository(api)
-        sessionManager = SessionManager(this)
-        factory = UserViewModelFactory(usersRepository)
-        viewModel = ViewModelProvider(this, factory).get(UserViewModel::class.java)
+        binding.tvSignIn.setOnClickListener { finish() }
+        binding.btnSignUp.setOnClickListener { validate()?.let(::signUp) }
+    }
 
-        viewModel.user.observe(this, Observer {
-            createStudent(it.id)
-        })
-
-        viewModel.student.observe(this, Observer {
-            signUpSuccess()
-        })
-
-        viewModel.error.observe(this, Observer { message ->
-            signUpFail(message)
-        })
-
-        tvLogin.setOnClickListener {
-            goToSignInActivity()
-        }
-
-        btnSignUp.setOnClickListener {
-            validateFields()
+    private fun validate(): SignUpRequest? {
+        val request = SignUpRequest(
+            name = binding.etName.text.toString().trim(),
+            email = binding.etEmail.text.toString().trim(),
+            password = binding.etPassword.text.toString(),
+            enrollment = binding.etEnrollment.text.toString().trim(),
+        )
+        return when {
+            listOf(request.name, request.email, request.enrollment, request.password).any { it.isEmpty() } ->
+                null.also { toast("Preencha todos os campos") }
+            request.password.length < 6 -> null.also { toast("A senha precisa ter pelo menos 6 caracteres") }
+            else -> request
         }
     }
 
-
-    private fun validateFields() {
-        val name = etSignUpName.text.toString()
-        val email = etSignUpEmail.text.toString()
-        val enrollment = etSignUpEnrollment.text.toString()
-        val password = etSignUpPassword.text.toString()
-
-        if (name.isEmpty() || email.isEmpty() || enrollment.isEmpty() || password.isBlank()) {
-            Toast.makeText(this, "Preencha todos os campos", Toast.LENGTH_SHORT).show()
-        } else {
-            signUp(name, email, password)
+    private fun signUp(request: SignUpRequest) {
+        setLoading(true)
+        lifecycleScope.launch {
+            safeCall { vision.api.signUp(request) }
+                .mapCatching { SignInActivity.signIn(this@SignUpActivity, request.email, request.password).getOrThrow() }
+                .onSuccess {
+                    toast("Conta criada com sucesso")
+                    startActivity(
+                        Intent(this@SignUpActivity, MainActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+                    )
+                }
+                .onFailure { toast(it.message) }
+            setLoading(false)
         }
     }
 
-    private fun createStudent(userId: Int) {
-        val enrollment = etSignUpEnrollment.text.toString()
-        val studentRequest = StudentRequest(enrollment, userId)
-        viewModel.createStudent(studentRequest)
+    private fun setLoading(loading: Boolean) {
+        binding.btnSignUp.isEnabled = !loading
+        binding.progress.visible(loading)
     }
-
-    private fun signUp(name: String, email: String, password: String) {
-        val userRequest = UserRequest(name, email, password)
-        btnSignUp.startAnimation()
-        viewModel.createUser(userRequest)
-    }
-
-    private fun signUpSuccess() {
-        btnSignUp.revertAnimation()
-        Toast.makeText(this, "Conta criada com sucesso", Toast.LENGTH_SHORT).show()
-        goToSignInActivity()
-    }
-
-    private fun goToSignInActivity() {
-        Intent(this, SignInActivity::class.java).also {
-            startActivity(it)
-        }
-    }
-
-    private fun signUpFail(message: String) {
-        btnSignUp.revertAnimation()
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-    }
-
-
 }
